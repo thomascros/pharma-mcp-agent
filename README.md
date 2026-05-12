@@ -10,8 +10,8 @@ on a Claude subscription via Claude Code.
 
 ## Why I built this
 
-I found [celltype-agent](https://github.com/celltype/cli) and wanted to use it for target prioritization mainly, but the original system
-runs inside the Claude Agent SDK and bills per token through the Anthropic API. I reconfigured it
+A friend found [celltype-agent](https://github.com/celltype/cli) and wanted to use it for target prioritization mainly, but the original system
+runs inside the Claude Agent SDK and bills per token through the Anthropic API. Therefore, I reconfigured it
 as a standalone MCP server over stdio so she can access the same tool set through Claude Code on
 a subscription plan. She's been using it for several months; her assessment is that accuracy on
 target prioritization questions is noticeably better than asking base Claude
