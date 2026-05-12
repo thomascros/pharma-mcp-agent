@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run python -c \":*)",
+      "mcp__ct-tools__literature-pubmed_search",
+      "mcp__ct-tools__data_api-opentargets_search",
+      "mcp__ct-tools__data_api-uniprot_lookup",
+      "mcp__ct-tools__target-druggability",
+      "mcp__ct-tools__target-disease_association",
+      "mcp__ct-tools__genomics-gwas_lookup",
+      "mcp__ct-tools__target-expression_profile",
+      "mcp__ct-tools__network-ppi_analysis",
+      "mcp__ct-tools__clinical-trial_search",
+      "mcp__ct-tools__structure-alphafold_fetch",
+      "mcp__ct-tools__data_api-pdb_search",
+      "mcp__ct-tools__target-coessentiality",
+      "mcp__ct-tools__genomics-eqtl_lookup",
+      "mcp__ct-tools__cellxgene-gene_expression"
+    ]
+  }
+}

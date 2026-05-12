@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ct-tools": {
+      "command": "uv",
+      "args": ["run", "ct-mcp-server"]
+    }
+  }
+}

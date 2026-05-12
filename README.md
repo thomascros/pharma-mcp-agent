@@ -1,204 +1,173 @@
-# celltype-cli
+# Drug Discovery Agent — MCP-powered research assistant
 
-An autonomous agent for drug discovery research. Like Claude Code, but for biology.
+## What this is
 
-Ask questions in natural language. celltype-cli plans the analysis, selects the right tools, executes them, validates results, and returns data-backed conclusions.
+190+ drug discovery tools exposed as an MCP server for Claude Code. The tools cover target
+prioritization, compound profiling, indication mapping, safety assessment, and clinical trial
+analysis. They connect directly to PubMed, ChEMBL, UniProt, Open Targets, ClinicalTrials.gov,
+Reactome, PDBe, GEO, and 25+ other databases. No Anthropic API key required — the server runs
+on a Claude subscription via Claude Code.
 
-<img src="assets/ct2.gif" alt="ct demo" width="70%">
+## Why I built this
 
-## Benchmark
+I found [celltype-agent](https://github.com/celltype/cli) and wanted to use it for target prioritization mainly, but the original system
+runs inside the Claude Agent SDK and bills per token through the Anthropic API. I reconfigured it
+as a standalone MCP server over stdio so she can access the same tool set through Claude Code on
+a subscription plan. She's been using it for several months; her assessment is that accuracy on
+target prioritization questions is noticeably better than asking base Claude
+or ChatGPT directly — the difference being that every answer is grounded in live database queries
+rather than training-time knowledge.
 
-CellType CLI achieves **90% accuracy** on [BixBench-Verified-50](https://huggingface.co/datasets/phylobio/BixBench-Verified-50), outperforming all existing agentic systems for computational biology.
+## What I changed from the original
 
-![BixBench Benchmark Results](assets/bixbench_benchmark.png)
+The original system wires the tool registry into the Claude Agent SDK via `create_ct_mcp_server()`
+in `src/ct/agent/mcp_server.py`. That function creates an in-process MCP server used by the `ct`
+CLI agent — it requires an Anthropic API key and bills per token.
 
-| System | Accuracy |
-|--------|----------|
-| **celltype-cli (Opus 4.6)** | **90.0%** |
-| Phylo BiomniLab | 88.7% |
-| Edison Analysis | 78.0% |
-| Claude Code (Opus 4.6) | 65.3% |
-| OpenAI Agents SDK (GPT 5.2) | 61.3% |
+I added `src/ct/agent/mcp_stdio.py`, which exposes the same tool registry via `mcp.server.Server`
+over stdio transport. Claude Code connects to it as an MCP client. Four implementation details
+worth noting:
 
-## Why ct?
+- **Tool pre-loading.** All tools are imported before the MCP event loop starts. Without this,
+  the first `tools/list` call blocks for 1-2 seconds on imports, and the MCP client's
+  pending-request entry expires before the response arrives — producing "unknown message ID" errors.
 
-- **190+ drug discovery tools** — Target prioritization, compound profiling, dose-response modeling, pathway enrichment, safety assessment, clinical development, and more.
-- **Claude-powered reasoning** — Built on the Claude Agent SDK. Claude plans multi-step research workflows, calls tools, self-corrects, and synthesizes findings.
-- **Managed data pipelines** — One-command download of DepMap, PRISM, L1000, and proteomics datasets with auto-discovery loaders.
-- **30+ database APIs** — PubMed, ChEMBL, UniProt, Open Targets, ClinicalTrials.gov, Reactome, PDBe, and more — no setup required.
-- **Research UX** — Interactive terminal with @mentions, session resume, trace logging, HTML reports, and notebook export.
-- **Persistent sandbox** — Stateful Python and R execution across turns (pandas, scipy, gseapy, pydeseq2, BioPython).
-- **Open source** — MIT licensed.
+- **Name mapping.** Internal tool names use dots (`target.coessentiality`). The Claude API
+  requires names matching `^[a-zA-Z0-9_-]{1,64}$`, so dots are replaced with hyphens in
+  `list_tools()` and reversed in `call_tool()`.
 
-## Installation
+- **Type coercion.** MCP sends all tool arguments as strings. The server coerces them to
+  `int`, `float`, or `bool` where the value warrants it, since tool functions often expect
+  typed parameters.
 
-### Quick install
+- **Persistent sandbox.** The `run_python` sandbox is a singleton for the process lifetime.
+  Variables declared in one tool call are available in the next, matching how the original
+  in-process server behaved.
+
+The entry point is registered in `pyproject.toml` as `ct-mcp-server`, so `.mcp.json` only needs
+`uv run ct-mcp-server`.
+
+## Architecture
+
+```
+Claude Code
+    │  MCP stdio (stdin/stdout)
+    ▼
+ct-mcp-server  ←  src/ct/agent/mcp_stdio.py
+    │
+    ├── Tool registry  ←  src/ct/tools/
+    │       190+ domain tools
+    │
+    └── Persistent Python sandbox  (run_python · run_r)
+            │
+            ▼
+    External APIs
+        PubMed · ChEMBL · UniProt · Open Targets · ClinicalTrials.gov
+        Reactome · PDBe · GEO · GWAS Catalog · GTEx · CELLxGENE
+        DepMap · PRISM · L1000 · PubChem · FAERS · ...
+```
+
+## Tools available
+
+| Category | What it does | Key databases |
+|----------|-------------|---------------|
+| **Target** | Druggability, co-essentiality, disease association, expression profiling | Open Targets, DepMap, UniProt |
+| **Chemistry** | SAR analysis, scaffold hopping, similarity search, retrosynthesis, ADMET | PubChem, ChEMBL, RDKit |
+| **Clinical** | Trial search, indication mapping, population sizing, TCGA stratification | ClinicalTrials.gov, TCGA |
+| **Safety** | ADMET prediction, anti-target profiling, SALL4 risk, DDI screening | FAERS, ChEMBL |
+| **Literature** | Full-text search, patent search, preprints | PubMed, OpenAlex, Espacenet |
+| **Expression / Omics** | Pathway enrichment, L1000 signatures, TF activity, DESeq2, scRNA-seq | GEO, CELLxGENE, CLUE/L1000 |
+| **Genomics** | GWAS lookup, eQTL, Mendelian randomization, colocalization | GWAS Catalog, GTEx, OpenTargets genetics |
+| **Structure** | AlphaFold fetch, binding site analysis, docking, FEP, ternary complex prediction | RCSB PDB, AlphaFold DB |
+| **Data APIs** | Individual gene, protein, variant, pathway, compound, and disease lookups | MyGene, UniProt, Reactome, PDBe, and 20+ more |
+
+Most tools work immediately via public APIs. A subset (DepMap viability, PRISM screening, L1000
+transcriptomics) require local data downloads. See
+[`src/ct/tools/_tool_classification.md`](src/ct/tools/_tool_classification.md) for the complete
+breakdown.
+
+## Setup
+
+**Requirements:** Python 3.10+, [uv](https://docs.astral.sh/uv/) (recommended) or pip, Claude Code.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/celltype/cli/main/install.sh | bash
-```
-
-Detects Python 3.10+, installs via `pipx` or `pip`, and launches an interactive setup wizard.
-
-### Manual install
-
-```bash
-# With pipx (isolated environment, recommended)
-pipx install celltype-cli
-
-# Or with pip
-pip install celltype-cli
-
-# Or with optional scientific stacks (RDKit, scanpy, torch, etc.)
-pip install "celltype-cli[all]"
-
-# Run the setup wizard
-ct setup
-```
-
-### Authentication
-
-```bash
-# Interactive setup (recommended)
-ct setup
-
-# Or set directly
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# Non-interactive (CI/scripting)
-ct setup --api-key sk-ant-api03-...
-```
-
-## Getting Started
-
-### Basic usage
-
-```bash
-# Start interactive session
-ct
-
-# Single query
-ct "What are the top degradation targets for this compound?"
-
-# Validate setup
-ct doctor
-```
-
-### Interactive commands
-
-Inside `ct` interactive mode:
-
-- `/help` — command reference + examples
-- `/tools` — list all tools with status
-- `/agents N <query>` — run N parallel research agents
-- `/case-study <id>` — curated multi-agent case studies
-- `/sessions`, `/resume` — session lifecycle
-- `/copy`, `/export` — save/share outputs
-- `/usage` — token and cost tracking
-
-### Quick examples
-
-**Target prioritization**
-```
-$ ct "I have a CRBN molecular glue. Proteomics shows it degrades
-      IKZF1, GSPT1, and CK1α. Which target should I prioritize?"
-```
-
-**Combination strategy**
-```
-$ ct "My lead compound is immune-cold. What combination strategy should I use?"
-```
-
-**Resistance biomarkers**
-```
-$ ct "Build a resistance biomarker panel for my lead compound"
-```
-
-## Key Features
-
-### 190+ Domain Tools
-
-| Category | Examples |
-|----------|---------|
-| **Target** | Neosubstrate scoring, degron prediction, co-essentiality networks |
-| **Chemistry** | SAR analysis, fingerprint similarity, scaffold clustering |
-| **Expression** | L1000 signatures, pathway enrichment, TF activity, immune scoring |
-| **Viability** | Dose-response modeling, PRISM screening, therapeutic windows |
-| **Biomarker** | Mutation sensitivity, resistance profiling, dependency validation |
-| **Clinical** | Indication mapping, population sizing, TCGA stratification |
-| **Safety** | Anti-target flagging, multi-modal profiling, SALL4 risk |
-| **Literature** | PubMed, OpenAlex, ChEMBL search |
-| **DNA** | ORF finding, codon optimization, primer design, Golden Gate/Gibson assembly |
-| **Data APIs** | MyGene, UniProt, Reactome, PDBe, ClinicalTrials.gov, and 25+ more |
-
-### Data Management
-
-```bash
-# Download core datasets
-ct data pull depmap        # DepMap CRISPR, mutations, expression
-ct data pull prism         # PRISM cell viability
-ct data pull msigdb        # Gene sets
-ct data pull alphafold     # Protein structures (on-demand)
-
-# Or point to existing data
-ct config set data.depmap /path/to/depmap/
-ct config set data.prism /path/to/prism/
-```
-
-Without local data, ct still works using 30+ database APIs.
-
-### Reports
-
-Every query auto-saves a markdown report. Convert to branded, self-contained HTML:
-
-```bash
-ct report list              # list reports
-ct report publish           # convert latest .md to .html
-ct report show              # open in browser
-```
-
-Dark theme, responsive layout, inline CSS. No CDN, no JavaScript. Shareable via email/Slack.
-
-## Known Limitations
-
-- **Local data for some tools** — Target, viability, expression, combination, biomarker tools need local DepMap/PRISM/L1000 datasets. The planner auto-excludes unavailable tools and uses API alternatives.
-- **Optional dependencies** — RDKit (chemistry), scanpy (single-cell), torch (protein embeddings). Tools report install instructions if missing.
-- **API rate limits** — PubMed, UniProt, Open Targets may rate-limit heavy usage.
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| `ct` fails at startup | `ct doctor` |
-| No API key | `ct setup` or `export ANTHROPIC_API_KEY=...` |
-| Data not found | `ct data pull <dataset>` |
-| Missing dependency | `pip install "celltype-cli[all]"` |
-| Session lost | `ct --continue` (sessions auto-save) |
-
-## Contributing
-
-```bash
-git clone https://github.com/celltype/cli.git
+git clone <your-fork-url>
 cd cli
-pip install -e ".[dev]"
-ct setup
-pytest tests/
+pip install -e .
+# or with uv:
+uv sync
 ```
 
-We welcome contributions — bug reports, feature requests, documentation improvements, and pull requests.
+For chemistry tools (SAR, docking, retrosynthesis):
+```bash
+pip install -e ".[chemistry]"   # requires RDKit
+```
 
-## Enterprise & On-Premise
+For single-cell tools (scRNA-seq clustering, annotation):
+```bash
+pip install -e ".[singlecell]"  # requires scanpy / anndata
+```
 
-celltype-cli is free and open source, powered by Claude out of the box.
+**Configure Claude Code.** The `.mcp.json` at the repo root is already set up for project-local
+use. For global use, add the same block to `~/.claude/claude_desktop_config.json`:
 
-For pharma and biotech teams that need to keep data on-premise, CellType offers proprietary research agent models purpose-built to replace frontier LLMs — deployable locally behind your firewall with zero data leaving your infrastructure.
+```json
+{
+  "mcpServers": {
+    "ct-tools": {
+      "command": "uv",
+      "args": ["run", "ct-mcp-server"]
+    }
+  }
+}
+```
 
-**[Contact us](mailto:hello@celltype.com)** to learn more.
+**Verify.** Open Claude Code in this directory and ask:
 
-## License
+> "Look up the UniProt entry for TP53"
 
-MIT — see [LICENSE](LICENSE)
+You should see a `ct-tools:data_api-uniprot_lookup` tool call and a result within a few seconds.
 
----
+## Example queries
 
-Built by [CellType Inc.](https://celltype.com)
+**Target validation**
+> "What is the genetic evidence for KRAS as a drug target in non-small cell lung cancer?"
+
+Invokes `genomics-gwas_lookup`, `genomics-eqtl_lookup`, `target-disease_association`,
+`literature-pubmed_search`. Returns a causal chain from GWAS associations through expression
+quantitative trait loci to clinical trial evidence.
+
+**Compound safety profile**
+> "Profile the safety and selectivity of vemurafenib — what are the key off-target risks?"
+
+Invokes `safety-classify`, `safety-admet_predict`, `safety-antitarget_profile`,
+`literature-chembl_query`. Returns ADMET properties, predicted off-target binding, and a summary
+of known clinical adverse events.
+
+**Indication mapping**
+> "Which cancer types are most sensitive to BET inhibitors, and what biomarkers predict response?"
+
+Invokes `clinical-indication_map`, `viability-tissue_selectivity`,
+`biomarker-mutation_sensitivity`. Returns a ranked indication list with sensitivity data from
+PRISM screens and candidate predictive biomarkers.
+
+## Technical notes
+
+- **Most tools need no data download.** They call public APIs and return results immediately.
+  [`src/ct/tools/_tool_classification.md`](src/ct/tools/_tool_classification.md) lists which
+  tools fall into each category (API-only vs. requires local data).
+- **Pre-loading is load-bearing.** Removing the `ensure_loaded()` call before `asyncio.run()`
+  in `mcp_stdio.py` will produce intermittent "unknown message ID" errors from the MCP client
+  on first connection.
+- **API rate limits apply.** PubMed, UniProt, and Open Targets may throttle high-frequency
+  queries. The tools have no built-in retry logic — if a call times out, retrying usually works.
+- **R execution is optional.** `run_r` is exposed only if rpy2 is installed. It will not appear
+  in the tool list otherwise. Useful for DESeq2, survival analysis, and spline fitting where R
+  is the reference implementation.
+
+## Credits
+
+All 190+ domain tools, the tool registry, and the original in-process MCP server are the work of
+[CellType Inc.](https://github.com/celltype/cli) (MIT license). This fork adds the stdio
+transport layer (`src/ct/agent/mcp_stdio.py`) and this documentation to enable Claude Code
+integration.
