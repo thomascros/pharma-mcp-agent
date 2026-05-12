@@ -10,13 +10,7 @@ on a Claude subscription via Claude Code.
 
 ## Why I built this
 
-A friend found [celltype-agent](https://github.com/celltype/cli) and wanted to use it for target prioritization mainly, but the original system
-runs inside the Claude Agent SDK and bills per token through the Anthropic API. Therefore, I reconfigured it
-as a standalone MCP server over stdio so she can access the same tool set through Claude Code on
-a subscription plan. She's been using it for several months; her assessment is that accuracy on
-target prioritization questions is noticeably better than asking base Claude
-or ChatGPT directly — the difference being that every answer is grounded in live database queries
-rather than training-time knowledge.
+I came across [celltype-agent](https://github.com/celltype/cli) while exploring the intersection of agentic AI and drug discovery. The original system runs inside the Claude Agent SDK and requires an Anthropic API key with per-token billing. I wanted to use it through Claude Code on a subscription plan, so I reconfigured the tool registry as a standalone MCP server over stdio transport. The result is a Claude Code-native version of the same 190+ tool set. 
 
 ## What I changed from the original
 
@@ -92,7 +86,7 @@ breakdown.
 
 ```bash
 git clone <your-fork-url>
-cd cli
+cd pharma-mcp-agent
 pip install -e .
 # or with uv:
 uv sync
